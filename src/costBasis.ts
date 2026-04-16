@@ -8,6 +8,7 @@ export interface Lot {
   pricePerToken: number;
   acquiredAt: number;
   txHash: `0x${string}`;
+  source?: 'initial';
 }
 
 export interface RealizedSale {
@@ -23,6 +24,15 @@ export interface AverageSummary {
   amount: bigint;
   pricePerToken: number;
 }
+
+export interface InitialState {
+  amount: bigint;          // raw token units
+  costBasisUSD: number;    // total USD cost basis for `amount`
+  asOf: number;            // ms since epoch; 0 means "unspecified" (not displayed)
+}
+
+export const INITIAL_TX_HASH =
+  '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
 
 export interface CostBasisResult {
   method: Method;
@@ -48,6 +58,7 @@ export function computeCostBasis(
   decimals: number,
   priceFn: (ts: number) => number,
   method: Method,
+  initial?: InitialState,
 ): CostBasisResult {
   const lots: Lot[] = [];
   let lotsHead = 0; // amortized O(1) FIFO drain instead of shift()
@@ -59,6 +70,23 @@ export function computeCostBasis(
 
   let runningHeld = 0n;
   let avgTotalCostScaled = 0n;
+
+  if (initial && initial.amount > 0n) {
+    const amountFloat = toFloat(initial.amount, decimals);
+    const price = amountFloat > 0 ? initial.costBasisUSD / amountFloat : 0;
+    runningHeld += initial.amount;
+    if (method === 'average') {
+      avgTotalCostScaled += initial.amount * BigInt(Math.round(price * PRICE_SCALE_NUM));
+    } else {
+      lots.push({
+        amount: initial.amount,
+        pricePerToken: price,
+        acquiredAt: initial.asOf,
+        txHash: INITIAL_TX_HASH,
+        source: 'initial',
+      });
+    }
+  }
 
   for (const t of transfers) {
     const price = priceFn(t.timestamp);

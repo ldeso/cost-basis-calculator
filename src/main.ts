@@ -4,22 +4,34 @@ import {
   formatUnits,
   http,
   isAddress,
+  parseUnits,
   type Address,
   type PublicClient,
 } from 'viem';
 import { CHAINS, isChainKey, rpcUrlFor, type ChainConfig } from './chains.js';
-import { fetchTransfers } from './transfers.js';
+import { fetchTransfers, type Transfer } from './transfers.js';
 import { fetchHistoricalPrices, MS_PER_DAY, priceAt } from './prices.js';
 import {
   computeCostBasis,
   toFloat,
+  INITIAL_TX_HASH,
   type CostBasisResult,
+  type InitialState,
   type Method,
 } from './costBasis.js';
 
 const DEFAULT_METHOD: Method = 'fifo';
 
-const FORM_FIELDS = ['account', 'token', 'chain', 'alchemyKey', 'method'] as const;
+const FORM_FIELDS = [
+  'account',
+  'token',
+  'chain',
+  'alchemyKey',
+  'method',
+  'initialAmount',
+  'initialCostBasis',
+  'startDate',
+] as const;
 
 function $(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -100,13 +112,17 @@ function renderResult(
   symbol: string,
   decimals: number,
   liveBalance: bigint,
+  seeded: boolean,
 ) {
   const out = $('results');
   const method = result.method;
 
   const balanceMismatch = result.remainingAmount !== liveBalance;
+  const mismatchReason = seeded
+    ? 'This is expected when seeding an initial state unless the start date excludes the origin of that balance; otherwise the token may have non-standard transfer logic (rebases, fees, etc.).'
+    : 'The token may have non-standard transfer logic (rebases, fees, etc.).';
   const mismatchHTML = balanceMismatch
-    ? `<p class="warn">⚠ Computed balance ${fmtAmount(result.remainingAmount, decimals)} ${symbol} differs from on-chain balance ${fmtAmount(liveBalance, decimals)} ${symbol}. The token may have non-standard transfer logic (rebases, fees, etc.).</p>`
+    ? `<p class="warn">⚠ Computed balance ${fmtAmount(result.remainingAmount, decimals)} ${symbol} differs from on-chain balance ${fmtAmount(liveBalance, decimals)} ${symbol}. ${mismatchReason}</p>`
     : '';
 
   const warningsHTML =
@@ -140,14 +156,18 @@ function renderResult(
     lotsRows = `<tr><td colspan="5" class="muted">No remaining holdings.</td></tr>`;
   } else {
     lotsRows = result.remainingLots
-      .map((l) =>
-        lotRow(
-          fmtDate(l.acquiredAt),
-          l.amount,
-          l.pricePerToken,
-          `<a href="${txLink(chain, l.txHash)}" target="_blank" rel="noopener">${shortHash(l.txHash)}</a>`,
-        ),
-      )
+      .map((l) => {
+        const isInitial = l.source === 'initial' || l.txHash === INITIAL_TX_HASH;
+        const dateCell = isInitial
+          ? l.acquiredAt > 0
+            ? `${fmtDate(l.acquiredAt)} <span class="muted">(initial)</span>`
+            : '<span class="muted">initial</span>'
+          : fmtDate(l.acquiredAt);
+        const txCell = isInitial
+          ? '<span class="muted">seeded</span>'
+          : `<a href="${txLink(chain, l.txHash)}" target="_blank" rel="noopener">${shortHash(l.txHash)}</a>`;
+        return lotRow(dateCell, l.amount, l.pricePerToken, txCell);
+      })
       .join('');
   }
 
@@ -205,6 +225,9 @@ async function run() {
     document.querySelector<HTMLInputElement>('input[name="method"]:checked')
       ?.value ?? DEFAULT_METHOD
   ) as Method;
+  const initialAmountStr = ($('initialAmount') as HTMLInputElement).value.trim();
+  const initialCostStr = ($('initialCostBasis') as HTMLInputElement).value.trim();
+  const startDateStr = ($('startDate') as HTMLInputElement).value.trim();
 
   if (!isAddress(account)) {
     setStatus('Invalid account address.', 'error');
@@ -220,6 +243,30 @@ async function run() {
   }
   if (!alchemyKey) {
     setStatus('ALCHEMY_API_KEY is required.', 'error');
+    return;
+  }
+
+  let startMsFilter: number | null = null;
+  if (startDateStr) {
+    const parsed = Date.parse(`${startDateStr}T00:00:00Z`);
+    if (Number.isNaN(parsed)) {
+      setStatus('Invalid start date.', 'error');
+      return;
+    }
+    startMsFilter = parsed;
+  }
+
+  const initialCostUSD = initialCostStr ? Number(initialCostStr) : 0;
+  if (initialCostStr && !Number.isFinite(initialCostUSD)) {
+    setStatus('Invalid initial cost basis.', 'error');
+    return;
+  }
+  if (initialCostUSD < 0) {
+    setStatus('Initial cost basis must be non-negative.', 'error');
+    return;
+  }
+  if (initialAmountStr && !/^\d+(\.\d+)?$/.test(initialAmountStr)) {
+    setStatus('Invalid initial amount (use a non-negative decimal).', 'error');
     return;
   }
   const chain = CHAINS[chainKey];
@@ -249,52 +296,94 @@ async function run() {
     ]);
     const decimals = Number(decimalsRaw);
 
-    const transfers = await fetchTransfers(client, tokenAddr, accountAddr, setStatus);
-
-    if (transfers.length === 0) {
-      setStatus('No transfers found for this account/token.', 'info');
-      renderResult(
-        computeCostBasis([], decimals, () => 0, method),
-        chain,
-        symbol,
-        decimals,
-        liveBalance,
-      );
-      return;
-    }
-
-    const startMs = transfers[0]!.timestamp - MS_PER_DAY;
-    const endMs = transfers[transfers.length - 1]!.timestamp + MS_PER_DAY;
-    const prices = await fetchHistoricalPrices(
-      alchemyKey,
-      chain.pricesNetwork,
-      tokenAddr,
-      startMs,
-      endMs,
-      setStatus,
-    );
-
-    if (prices.length === 0) {
+    let initial: InitialState | undefined;
+    if (initialAmountStr) {
+      try {
+        const amt = parseUnits(initialAmountStr, decimals);
+        if (amt > 0n) {
+          initial = {
+            amount: amt,
+            costBasisUSD: initialCostUSD,
+            asOf: startMsFilter ?? 0,
+          };
+        }
+      } catch {
+        setStatus('Initial amount has too many decimals for this token.', 'error');
+        return;
+      }
+    } else if (initialCostUSD > 0) {
       setStatus(
-        'No price data returned by Alchemy for this token. Cannot compute USD cost basis.',
+        'Initial cost basis set without an initial amount. Leave both blank or fill both.',
         'error',
       );
       return;
     }
 
+    const allTransfers = await fetchTransfers(client, tokenAddr, accountAddr, setStatus);
+    const transfers: Transfer[] =
+      startMsFilter != null
+        ? allTransfers.filter((t) => t.timestamp >= startMsFilter!)
+        : allTransfers;
+    const skipped = allTransfers.length - transfers.length;
+
+    if (transfers.length === 0 && !initial) {
+      setStatus(
+        skipped > 0
+          ? `No transfers on or after the start date (${skipped} earlier transfers skipped).`
+          : 'No transfers found for this account/token.',
+        'info',
+      );
+      renderResult(
+        computeCostBasis([], decimals, () => 0, method, initial),
+        chain,
+        symbol,
+        decimals,
+        liveBalance,
+        initial != null,
+      );
+      return;
+    }
+
+    let prices: Awaited<ReturnType<typeof fetchHistoricalPrices>> = [];
+    if (transfers.length > 0) {
+      const startMs = transfers[0]!.timestamp - MS_PER_DAY;
+      const endMs = transfers[transfers.length - 1]!.timestamp + MS_PER_DAY;
+      prices = await fetchHistoricalPrices(
+        alchemyKey,
+        chain.pricesNetwork,
+        tokenAddr,
+        startMs,
+        endMs,
+        setStatus,
+      );
+
+      if (prices.length === 0) {
+        setStatus(
+          'No price data returned by Alchemy for this token. Cannot compute USD cost basis.',
+          'error',
+        );
+        return;
+      }
+    }
+
     setStatus(
-      `Computing cost basis from ${transfers.length} transfers and ${prices.length} price points…`,
+      `Computing cost basis from ${transfers.length} transfers and ${prices.length} price points${
+        skipped > 0 ? ` (${skipped} earlier transfers skipped)` : ''
+      }${initial ? ' with seeded initial state' : ''}…`,
     );
     const result = computeCostBasis(
       transfers,
       decimals,
       (ts) => priceAt(prices, ts),
       method,
+      initial,
     );
 
-    renderResult(result, chain, symbol, decimals, liveBalance);
+    renderResult(result, chain, symbol, decimals, liveBalance, initial != null);
     setStatus(
-      `Done. ${transfers.length} transfers processed, ${result.realizedSales.length} sales realized.`,
+      `Done. ${transfers.length} transfers processed, ${result.realizedSales.length} sales realized${
+        skipped > 0 ? `, ${skipped} skipped` : ''
+      }${initial ? ', initial state seeded' : ''}.`,
     );
   } catch (err) {
     console.error(err);

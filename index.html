@@ -66,6 +66,22 @@
       font-weight: normal;
       margin-right: 16px;
     }
+    fieldset.initial-state { padding-top: 4px; }
+    fieldset.initial-state label.initial-field {
+      display: grid;
+      gap: 4px;
+      font-weight: 600;
+      margin: 0 0 8px;
+    }
+    fieldset.initial-state input[type="text"],
+    fieldset.initial-state input[type="date"] {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font: inherit;
+      background: var(--bg);
+      color: var(--fg);
+    }
     button {
       padding: 10px 16px;
       border: 0;
@@ -167,6 +183,27 @@
       <label><input type="radio" name="method" value="lifo" /> LIFO</label>
       <label><input type="radio" name="method" value="average" /> Weighted average</label>
     </fieldset>
+    <fieldset class="initial-state">
+      <legend>Initial state (optional)</legend>
+      <p class="muted" style="margin: 4px 0 8px; font-weight: normal;">
+        Seed a pre-existing balance with a known cost basis, e.g. after a
+        token migration: paste the old token&rsquo;s remaining amount and
+        remaining cost basis here, then set a start date on or after the
+        migration so pre-migration transfers are excluded.
+      </p>
+      <label class="initial-field">
+        Initial amount (tokens)
+        <input id="initialAmount" type="text" placeholder="0" autocomplete="off" inputmode="decimal" />
+      </label>
+      <label class="initial-field">
+        Initial cost basis (USD)
+        <input id="initialCostBasis" type="text" placeholder="0" autocomplete="off" inputmode="decimal" />
+      </label>
+      <label class="initial-field">
+        Start date (UTC, optional)
+        <input id="startDate" type="date" autocomplete="off" />
+      </label>
+    </fieldset>
     <button id="go" type="submit">Calculate</button>
   </form>
 
@@ -210,6 +247,14 @@
         endpoints and cannot scan entire histories).</li>
       <li><strong>Method</strong> &mdash; which lot-selection rule to apply
         when the account sends tokens out (see below).</li>
+      <li><strong>Initial state (optional)</strong> &mdash; seed a
+        pre-existing balance with a known cost basis. Intended for use
+        after a <em>token migration</em>: run the calculator on the old
+        token, then feed its last remaining amount and remaining cost
+        basis into these fields for the new token. Combined with a
+        <strong>start date</strong> that excludes the migration
+        transaction, this carries cost basis across the migration
+        instead of resetting it to migration-day market price.</li>
     </ul>
 
     <h2>How it computes the results</h2>
