@@ -143,6 +143,12 @@
     section.explainer li { margin: 4px 0; }
     details { margin: 8px 0; }
     details summary { cursor: pointer; font-weight: 600; }
+    details.section { margin: 16px 0 8px; }
+    details.section > summary {
+      font-size: 1.17em;
+      margin-bottom: 4px;
+    }
+    details.section > summary::marker { color: var(--muted); }
   </style>
 </head>
 <body>

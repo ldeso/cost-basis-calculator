@@ -224,15 +224,17 @@ function renderResult(
   const closedLotsHTML = result.averageSummary
     ? ''
     : `
-    <h3>Closed lots</h3>
-    <table>
-      <thead><tr><th>Acquired</th><th>Closed</th><th>Amount</th><th>Price/token</th><th>Cost</th><th>Proceeds</th><th>P&amp;L</th><th>Tx</th></tr></thead>
-      <tbody>${
-        result.closedLots.length === 0
-          ? `<tr><td colspan="8" class="muted">No fully consumed lots.</td></tr>`
-          : result.closedLots.map(closedRow).join('')
-      }</tbody>
-    </table>`;
+    <details class="section">
+      <summary>Closed lots</summary>
+      <table>
+        <thead><tr><th>Acquired</th><th>Closed</th><th>Amount</th><th>Price/token</th><th>Cost</th><th>Proceeds</th><th>P&amp;L</th><th>Tx</th></tr></thead>
+        <tbody>${
+          result.closedLots.length === 0
+            ? `<tr><td colspan="8" class="muted">No fully consumed lots.</td></tr>`
+            : result.closedLots.map(closedRow).join('')
+        }</tbody>
+      </table>
+    </details>`;
 
   out.innerHTML = `
     <h2>${symbol} — ${method.toUpperCase()}</h2>
@@ -246,18 +248,22 @@ function renderResult(
       <tr><td>Realized P&amp;L</td><td class="num ${result.realizedPnLUSD >= 0 ? 'pos' : 'neg'}">${fmtUSD(result.realizedPnLUSD)}</td></tr>
     </table>
 
-    <h3>Open lots</h3>
-    <table>
-      <thead><tr><th>Acquired</th><th>Amount</th><th>Price/token</th><th>Cost basis</th><th>Tx</th></tr></thead>
-      <tbody>${lotsRows}</tbody>
-    </table>
+    <details class="section" open>
+      <summary>Open lots</summary>
+      <table>
+        <thead><tr><th>Acquired</th><th>Amount</th><th>Price/token</th><th>Cost basis</th><th>Tx</th></tr></thead>
+        <tbody>${lotsRows}</tbody>
+      </table>
+    </details>
     ${closedLotsHTML}
 
-    <h3>Realized sales</h3>
-    <table>
-      <thead><tr><th>Date</th><th>Amount</th><th>Proceeds</th><th>Cost</th><th>P&amp;L</th><th>Tx</th></tr></thead>
-      <tbody>${salesRows}</tbody>
-    </table>
+    <details class="section" open>
+      <summary>Realized sales</summary>
+      <table>
+        <thead><tr><th>Date</th><th>Amount</th><th>Proceeds</th><th>Cost</th><th>P&amp;L</th><th>Tx</th></tr></thead>
+        <tbody>${salesRows}</tbody>
+      </table>
+    </details>
   `;
 }
 
