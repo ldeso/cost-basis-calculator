@@ -55,6 +55,34 @@ npx esbuild test/smoke.ts --bundle --format=esm --platform=node \
 node test/smoke.bundle.mjs <account> [token] [fifo|lifo|average]
 ```
 
+## Seeding an initial cost basis (e.g. after a token migration)
+
+The "Initial state (optional)" fieldset lets you start the replay from a
+pre-existing balance with a known cost basis instead of from zero. The
+typical use case is a **token migration**: compute the cost basis of the
+old token, then carry the last remaining amount and remaining USD cost
+basis forward as the starting point for the new token.
+
+Fields:
+- **Initial amount** — pre-existing balance in the new token's units
+  (decimal).
+- **Initial cost basis (USD)** — total USD cost attributed to that
+  balance. The per-token price of the seeded lot is derived as
+  `cost basis / amount`.
+- **Start date (UTC, optional)** — transfers strictly before this date
+  are excluded. Use a date on or after the migration so the migration-in
+  transfer of the new token is not double-counted against the seeded
+  balance.
+
+Behaviour:
+- FIFO/LIFO: one synthetic "initial" lot is pushed first. It is consumed
+  before any real lot under FIFO, and after every real lot under LIFO.
+- Weighted average: the seeded balance and cost are folded into the
+  running average before the first transfer is processed.
+- When an initial amount is seeded, the computed remaining amount is
+  expected to exceed the on-chain `balanceOf` unless you also set a
+  start date that excludes the pre-existing balance's origin transfer.
+
 ## Notes & limitations
 
 - Requires an **Alchemy** API key because `alchemy_getAssetTransfers` is a
